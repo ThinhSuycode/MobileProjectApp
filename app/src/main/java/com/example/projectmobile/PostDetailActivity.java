@@ -3,6 +3,8 @@ package com.example.projectmobile;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.format.DateFormat;
+import android.util.Log;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -144,6 +146,8 @@ public class PostDetailActivity extends AppCompatActivity implements CommentAdap
                 new Date()
         );
 
+        // Add locally first for instant feedback (optional, since listener will catch it too)
+        // Check duplication in listener to avoid double entry
         commentList.add(comment);
         commentAdapter.notifyItemInserted(commentList.size() - 1);
         rvComments.scrollToPosition(commentList.size() - 1);
@@ -161,11 +165,14 @@ public class PostDetailActivity extends AppCompatActivity implements CommentAdap
     }
 
     private void loadComments() {
+        // Loại bỏ orderBy("timestamp") để tránh lỗi thiếu Composite Index của Firestore
+        // Dữ liệu sẽ được sắp xếp client-side
         db.collection("comments")
                 .whereEqualTo("postId", post.getId())
-                .orderBy("timestamp", Query.Direction.ASCENDING)
                 .addSnapshotListener((snapshots, e) -> {
                     if (e != null) {
+                        Log.e("PostDetailActivity", "Listen failed.", e);
+                        Toast.makeText(PostDetailActivity.this, "Lỗi tải bình luận: " + e.getMessage(), Toast.LENGTH_LONG).show();
                         return;
                     }
 
@@ -176,7 +183,14 @@ public class PostDetailActivity extends AppCompatActivity implements CommentAdap
                         comment.setId(dc.getDocument().getId());
                         switch (dc.getType()) {
                             case ADDED:
-                                if (!commentList.contains(comment)) {
+                                boolean exists = false;
+                                for (Comment c : commentList) {
+                                    if (c.getId().equals(comment.getId())) {
+                                        exists = true;
+                                        break;
+                                    }
+                                }
+                                if (!exists) {
                                     commentList.add(comment);
                                 }
                                 break;
@@ -193,7 +207,13 @@ public class PostDetailActivity extends AppCompatActivity implements CommentAdap
                                 break;
                         }
                     }
-                    Collections.sort(commentList, Comparator.comparing(Comment::getTimestamp));
+                    // Sắp xếp lại danh sách theo thời gian
+                    Collections.sort(commentList, (o1, o2) -> {
+                        if (o1.getTimestamp() == null && o2.getTimestamp() == null) return 0;
+                        if (o1.getTimestamp() == null) return -1;
+                        if (o2.getTimestamp() == null) return 1;
+                        return o1.getTimestamp().compareTo(o2.getTimestamp());
+                    });
                     commentAdapter.notifyDataSetChanged();
                 });
     }
